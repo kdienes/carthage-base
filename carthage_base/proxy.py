@@ -194,6 +194,7 @@ class CertbotCertRole(ImageRole, SetupTaskMixin, AsyncInjectable):
                     '-d', ','.join(domains),
                     '-n',
                     '--agree-tos',
+                    '--expand',
                     '-m', self.model.certbot_email,
                     *test_argument)
             else: raise SkipSetupTask
@@ -299,9 +300,20 @@ class ProxyServerRole(MachineModel, ProxyImageRole, template=True):
         self.injector.replace_provider(InjectionKey('by_server_path'), self.by_server_path)
                                        
     
-    proxy_conf_task = mako_task('proxy.conf', by_server_path=InjectionKey('by_server_path'),
+    proxy_conf_task = mako_task('proxy.conf',
+                                by_server_path=InjectionKey('by_server_path'),
                                 certs_by_domain=InjectionKey('certs_by_domain'),
-                                output='etc/apache2/conf-enabled/proxy.conf')
+                                output='etc/apache2/conf-available/proxy.conf')
+
+    proxy_default_conf_task = mako_task('proxy-default.conf',
+                                        by_server_path=InjectionKey('by_server_path'),
+                                        certs_by_domain=InjectionKey('certs_by_domain'),
+                                        output='etc/apache2/conf-available/proxy-default.conf')
+
+    proxy_default_content_task = mako_task('proxy-default-404.html',
+                                           by_server_path=InjectionKey('by_server_path'),
+                                           certs_by_domain=InjectionKey('certs_by_domain'),
+                                           output='var/www/html/proxy-default-404.html')
 
     @inject(config=ProxyConfig)
     async def by_server_path(self, config):
@@ -312,7 +324,17 @@ class ProxyServerRole(MachineModel, ProxyImageRole, template=True):
         return config.certs_by_server()
 
     class proxy_server_cust(FilesystemCustomization):
+
         install_mako = install_mako_task('model')
+
+        @setup_task("Update dns for proxied services")
+        @inject(config=ProxyConfig)
+        async def update_conf(self, config):
+            for fn in ['proxy.conf', 'proxy-default.conf']:
+                p = self.path/'etc/apache2/conf-enabled'/fn
+                if p.is_symlink():
+                    continue
+                p.symlink_to(f'../conf-available/{fn}')
 
         @setup_task("Update dns for proxied services")
         @inject(config=ProxyConfig)
